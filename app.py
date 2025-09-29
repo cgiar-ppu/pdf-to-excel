@@ -6,6 +6,10 @@ from openpyxl.utils.exceptions import IllegalCharacterError
 import requests
 import re
 
+def sanitize_text(text):
+    illegal_chars = re.compile(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]')
+    return illegal_chars.sub('', text)
+
 st.title("PDF to Excel Extractor")
 
 st.markdown("""
@@ -33,6 +37,7 @@ if mode == "Upload PDF files":
                             if extracted:
                                 text += extracted + "\n\n"
                         full_text = text.strip()
+                        full_text = sanitize_text(full_text)
                         
                         max_chars = 30000
                         chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
@@ -171,6 +176,7 @@ elif mode == "Upload Excel with PDF URLs":
                             if extracted:
                                 text += extracted + "\n\n"
                         full_text = text.strip()
+                        full_text = sanitize_text(full_text)
                         max_chars = 30000
                         chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
                         for part_idx, chunk in enumerate(chunks, 1):
@@ -293,6 +299,7 @@ else:  # Paste list of URLs
                         if extracted:
                             text += extracted + "\n\n"
                     full_text = text.strip()
+                    full_text = sanitize_text(full_text)
                     max_chars = 30000
                     chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
                     for part_idx, chunk in enumerate(chunks, 1):
