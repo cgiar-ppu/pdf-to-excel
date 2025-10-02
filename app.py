@@ -6,38 +6,66 @@ from openpyxl.utils.exceptions import IllegalCharacterError
 import requests
 import re
 
+import docx
+from pptx import Presentation
+
 def sanitize_text(text):
     illegal_chars = re.compile(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]')
     return illegal_chars.sub('', text)
 
-st.title("PDF to Excel Extractor")
+def extract_text_from_pdf(file_stream):
+    reader = PyPDF2.PdfReader(file_stream)
+    text = ""
+    for page in reader.pages:
+        extracted = page.extract_text()
+        if extracted:
+            text += extracted + "\n\n"
+    return text.strip()
+
+def extract_text_from_docx(file_stream):
+    doc = docx.Document(file_stream)
+    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+    return text.strip()
+
+def extract_text_from_pptx(file_stream):
+    pres = Presentation(file_stream)
+    text = ""
+    for slide in pres.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                text += shape.text + "\n"
+    return text.strip()
+
+st.title("Document to Excel Extractor")
 
 st.markdown("""
-This app allows you to upload multiple machine-readable PDF files or an Excel file with PDF URLs, extract their text content using PyPDF2, and download the combined content in a single Excel sheet.
+This app allows you to upload multiple machine-readable documents (PDF, DOCX, PPTX) or an Excel file with document URLs, extract their text content, and download the combined content in a single Excel sheet.
 
-**Note:** This app does not perform OCR; it assumes the PDFs contain extractable text.
+**Note:** This app does not perform OCR; it assumes the documents contain extractable text.
 """)
 
-mode = st.radio("Choose input method", ["Upload PDF files", "Upload Excel with PDF URLs", "Paste list of URLs"])
+mode = st.radio("Choose input method", ["Upload documents", "Upload Excel with document URLs", "Paste list of URLs"])
 
-if mode == "Upload PDF files":
-    uploaded_files = st.file_uploader("Upload your PDF files", type=["pdf"], accept_multiple_files=True)
+if mode == "Upload documents":
+    uploaded_files = st.file_uploader("Upload your documents", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
 
     if st.button("Extract and Download Excel"):
         if uploaded_files:
-            with st.spinner("Extracting text from PDFs..."):
+            with st.spinner("Extracting text from documents..."):
                 errors = []
                 data = []
                 for uploaded_file in uploaded_files:
                     try:
-                        reader = PyPDF2.PdfReader(uploaded_file)
-                        text = ""
-                        for page in reader.pages:
-                            extracted = page.extract_text()
-                            if extracted:
-                                text += extracted + "\n\n"
-                        full_text = text.strip()
-                        full_text = sanitize_text(full_text)
+                        file_ext = uploaded_file.name.lower().split('.')[-1]
+                        if file_ext == 'pdf':
+                            text = extract_text_from_pdf(uploaded_file)
+                        elif file_ext == 'docx':
+                            text = extract_text_from_docx(uploaded_file)
+                        elif file_ext == 'pptx':
+                            text = extract_text_from_pptx(uploaded_file)
+                        else:
+                            raise ValueError(f"Unsupported file type: {file_ext}")
+                        full_text = sanitize_text(text)
                         
                         max_chars = 30000
                         chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
@@ -64,13 +92,13 @@ if mode == "Upload PDF files":
                         final_df = pd.concat(good_dfs)
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            final_df.to_excel(writer, sheet_name='PDF Contents', index=False)
+                            final_df.to_excel(writer, sheet_name='Document Contents', index=False)
                         output.seek(0)
                         
                         st.download_button(
                             label="Download Excel file",
                             data=output,
-                            file_name="pdf_contents.xlsx",
+                            file_name="document_contents.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                         st.success("Extraction complete! Click the button above to download your Excel file.")
@@ -84,9 +112,9 @@ if mode == "Upload PDF files":
                         for err in errors:
                             st.error(err)
         else:
-            st.warning("Please upload at least one PDF file.")
+            st.warning("Please upload at least one Document file.")
 
-elif mode == "Upload Excel with PDF URLs":
+elif mode == "Upload Excel with Document URLs":
     uploaded_excel = st.file_uploader("Upload your Excel file", type=["xlsx", "xls"])
 
     if uploaded_excel:
@@ -100,7 +128,7 @@ elif mode == "Upload Excel with PDF URLs":
             first_sheet = sheet_names[0]
             df_first = pd.read_excel(uploaded_excel, sheet_name=first_sheet)
             columns = df_first.columns.tolist()
-        url_column = st.selectbox("Select the column containing PDF URLs", columns)
+        url_column = st.selectbox("Select the column containing Document URLs", columns)
 
         # Initialize session state variables
         if 'url_list' not in st.session_state:
@@ -136,7 +164,7 @@ elif mode == "Upload Excel with PDF URLs":
                     st.warning(f"Column '{url_column}' not found in sheet '{sheet}'. Skipping.")
             total_urls = len(url_list)
             if total_urls == 0:
-                st.warning("No valid URLs found to process.")
+                st.warning("No valid document URLs found to process.")
             else:
                 st.session_state.url_list = url_list
                 st.session_state.current_idx = 0
@@ -166,25 +194,23 @@ elif mode == "Upload Excel with PDF URLs":
                 try:
                     response = requests.get(url, timeout=10)
                     response.raise_for_status()
-                    content_type = response.headers.get('Content-Type', '')
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    file_stream = io.BytesIO(response.content)
                     if 'application/pdf' in content_type:
-                        pdf_stream = io.BytesIO(response.content)
-                        reader = PyPDF2.PdfReader(pdf_stream)
-                        text = ""
-                        for page in reader.pages:
-                            extracted = page.extract_text()
-                            if extracted:
-                                text += extracted + "\n\n"
-                        full_text = text.strip()
-                        full_text = sanitize_text(full_text)
-                        max_chars = 30000
-                        chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
-                        for part_idx, chunk in enumerate(chunks, 1):
-                            st.session_state.data.append({"URL": url, "Part": part_idx, "Content": chunk})
-                        success = True
-                        break
+                        text = extract_text_from_pdf(file_stream)
+                    elif 'vnd.openxmlformats-officedocument.wordprocessingml.document' in content_type:
+                        text = extract_text_from_docx(file_stream)
+                    elif 'vnd.openxmlformats-officedocument.presentationml.presentation' in content_type:
+                        text = extract_text_from_pptx(file_stream)
                     else:
-                        raise ValueError(f"URL {url} did not return a PDF (Content-Type: {content_type})")
+                        raise ValueError(f"Unsupported content type for URL {url}: {content_type}")
+                    full_text = sanitize_text(text)
+                    max_chars = 30000
+                    chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
+                    for part_idx, chunk in enumerate(chunks, 1):
+                        st.session_state.data.append({"URL": url, "Part": part_idx, "Content": chunk})
+                    success = True
+                    break
                 except Exception as e:
                     if attempt == 1:
                         st.session_state.errors.append(f"Error processing URL {url} after 2 attempts: {str(e)}")
@@ -208,7 +234,7 @@ elif mode == "Upload Excel with PDF URLs":
                     final_df = pd.concat(good_dfs)
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        final_df.to_excel(writer, sheet_name='PDF Contents', index=False)
+                        final_df.to_excel(writer, sheet_name='Document Contents', index=False)
                     output.seek(0)
                     st.session_state.excel_data = output.getvalue()
                 else:
@@ -219,7 +245,7 @@ elif mode == "Upload Excel with PDF URLs":
             st.download_button(
                 label="Download Excel file",
                 data=st.session_state.excel_data,
-                file_name="pdf_contents.xlsx",
+                file_name="document_contents.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             st.success("Extraction complete! Click the button above to download your Excel file.")
@@ -234,7 +260,7 @@ elif mode == "Upload Excel with PDF URLs":
         st.info("Please upload an Excel file to proceed.")
 
 else:  # Paste list of URLs
-    pasted_text = st.text_area("Paste your list of PDF URLs here")
+    pasted_text = st.text_area("Paste your list of Document URLs here")
 
     # Initialize session state variables (using different keys for this mode)
     if 'paste_url_list' not in st.session_state:
@@ -259,7 +285,7 @@ else:  # Paste list of URLs
         url_list = re.findall(r'https?://\S+', pasted_text)
         total_urls = len(url_list)
         if total_urls == 0:
-            st.warning("No valid URLs found in the pasted text.")
+            st.warning("No valid document URLs found in the pasted text.")
         else:
             st.session_state.paste_url_list = url_list
             st.session_state.paste_current_idx = 0
@@ -289,25 +315,23 @@ else:  # Paste list of URLs
             try:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
-                content_type = response.headers.get('Content-Type', '')
+                content_type = response.headers.get('Content-Type', '').lower()
+                file_stream = io.BytesIO(response.content)
                 if 'application/pdf' in content_type:
-                    pdf_stream = io.BytesIO(response.content)
-                    reader = PyPDF2.PdfReader(pdf_stream)
-                    text = ""
-                    for page in reader.pages:
-                        extracted = page.extract_text()
-                        if extracted:
-                            text += extracted + "\n\n"
-                    full_text = text.strip()
-                    full_text = sanitize_text(full_text)
-                    max_chars = 30000
-                    chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
-                    for part_idx, chunk in enumerate(chunks, 1):
-                        st.session_state.paste_data.append({"URL": url, "Part": part_idx, "Content": chunk})
-                    success = True
-                    break
+                    text = extract_text_from_pdf(file_stream)
+                elif 'vnd.openxmlformats-officedocument.wordprocessingml.document' in content_type:
+                    text = extract_text_from_docx(file_stream)
+                elif 'vnd.openxmlformats-officedocument.presentationml.presentation' in content_type:
+                    text = extract_text_from_pptx(file_stream)
                 else:
-                    raise ValueError(f"URL {url} did not return a PDF (Content-Type: {content_type})")
+                    raise ValueError(f"Unsupported content type for URL {url}: {content_type}")
+                full_text = sanitize_text(text)
+                max_chars = 30000
+                chunks = [full_text[i:i + max_chars] for i in range(0, len(full_text), max_chars)]
+                for part_idx, chunk in enumerate(chunks, 1):
+                    st.session_state.paste_data.append({"URL": url, "Part": part_idx, "Content": chunk})
+                success = True
+                break
             except Exception as e:
                 if attempt == 1:
                     st.session_state.paste_errors.append(f"Error processing URL {url} after 2 attempts: {str(e)}")
@@ -331,7 +355,7 @@ else:  # Paste list of URLs
                 final_df = pd.concat(good_dfs)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    final_df.to_excel(writer, sheet_name='PDF Contents', index=False)
+                    final_df.to_excel(writer, sheet_name='Document Contents', index=False)
                 output.seek(0)
                 st.session_state.paste_excel_data = output.getvalue()
             else:
@@ -342,7 +366,7 @@ else:  # Paste list of URLs
         st.download_button(
             label="Download Excel file",
             data=st.session_state.paste_excel_data,
-            file_name="pdf_contents.xlsx",
+            file_name="document_contents.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         st.success("Extraction complete! Click the button above to download your Excel file.")

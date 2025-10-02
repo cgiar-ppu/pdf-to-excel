@@ -3,3 +3,5 @@ PyPDF2
 pandas
 openpyxl
 requests
+python-docx
+python-pptx
