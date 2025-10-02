@@ -78,6 +78,7 @@ if mode == "Upload documents":
                 
                 if data:
                     df = pd.DataFrame(data)
+                    df['project name'] = 'placeholder'
                     good_dfs = []
                     for filename, group in df.groupby('Filename'):
                         try:
@@ -221,6 +222,7 @@ elif mode == "Upload Excel with Document URLs":
         if st.session_state.processing_mode == "excel" and st.session_state.current_idx >= st.session_state.total_urls and st.session_state.excel_data is None and st.session_state.data:
             with st.spinner("Generating Excel file..."):
                 df = pd.DataFrame(st.session_state.data)
+                df['project name'] = 'placeholder'
                 good_dfs = []
                 for url_group, group in df.groupby('URL'):
                     try:
@@ -342,6 +344,7 @@ else:  # Paste list of URLs
     if st.session_state.processing_mode == "paste" and st.session_state.paste_current_idx >= st.session_state.paste_total_urls and st.session_state.paste_excel_data is None and st.session_state.paste_data:
         with st.spinner("Generating Excel file..."):
             df = pd.DataFrame(st.session_state.paste_data)
+            df['project name'] = 'placeholder'
             good_dfs = []
             for url_group, group in df.groupby('URL'):
                 try:
